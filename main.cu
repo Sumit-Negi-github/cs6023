@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <cuda.h>
 
-void find_augmenting_path_cpu(int vertices, int edges, int source, int sink, int *graph, int *path, int *path_length, int *queue, int *visited, int *min_flow){
+void find_augmenting_path(int vertices, int edges, int source, int sink, int *graph, int *path, int *path_length, int *queue, int *visited, int *min_flow){
 
     int start = 0, end = 1;
 
@@ -137,7 +137,7 @@ __global__ void printGPUFF(int *graph, int vertices){
     }
 }
 
-void ford_fulkerson(int vertices, int edges, int source, int sink, int *cpu_graph, int *gpu_graph, int *cpu_result, int *gpu_result){
+void edmonds_karp(int vertices, int edges, int source, int sink, int *cpu_graph, int *gpu_graph, int *cpu_result, int *gpu_result){
     int *cpu_path_length, *gpu_path_length;
     int *cpu_path, *gpu_path, *cpu_min_flow, *gpu_min_flow;
     int *cpu_queue, *cpu_visited;
@@ -155,13 +155,13 @@ void ford_fulkerson(int vertices, int edges, int source, int sink, int *cpu_grap
     cudaMemcpy(gpu_graph, cpu_graph, 2 * vertices * vertices * sizeof(int), cudaMemcpyHostToDevice);
     
     cudaMemset(gpu_result, 0, sizeof(int));
-    
+
     while(1){
         memset(cpu_queue, 0, 2 * vertices * sizeof(int));
         memset(cpu_visited, 0, vertices * sizeof(int));
 
         *cpu_min_flow = INT_MAX;
-        find_augmenting_path_cpu(vertices, edges, source, sink, cpu_graph, cpu_path, cpu_path_length, cpu_queue, cpu_visited, cpu_min_flow);
+        find_augmenting_path(vertices, edges, source, sink, cpu_graph, cpu_path, cpu_path_length, cpu_queue, cpu_visited, cpu_min_flow);
         
         if(*cpu_path_length == -1){
             break;
@@ -230,7 +230,7 @@ int main(int argc, char **argv){
     cudaMemcpy(gpu_graph, cpu_graph, vertices * vertices * sizeof(int), cudaMemcpyHostToDevice);
     
     // Rigved's Part
-    ford_fulkerson(vertices, edges, source - 1, sink - 1, cpu_ff_graph, gpu_ff_graph, cpu_result, gpu_result);
+    edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_ff_graph, gpu_ff_graph, cpu_result, gpu_result);
     
     // Sumit's Part
     // push_relabel<<<1, 1>>>(gpu_result);  
