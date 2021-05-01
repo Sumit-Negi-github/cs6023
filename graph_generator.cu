@@ -1,40 +1,45 @@
-%%cu
 #include<cuda.h>
 #include<stdio.h>
 #include<stdlib.h>
+#define max_num_edge (nvertices*(nvertices-1))/2
+
+int graph[10001][10001];
 
 int main () {
     int nvertices, nedges, row, col, capacity, maxcapacity, source, destination;
+    srand(time(0));
 
     // Set number of vertices
-    nvertices = 6;
+    nvertices = 10000;
+    // nvertices = rand() % 10001;
 
     // Set number of edges 
-    nedges = 8;
+    nedges = rand() % (nvertices*(nvertices-1));
 
     // Set maximum capacity possible for an edge
     maxcapacity = 10;
 
-
-    srand(time(0));
+    printf("Number of vertices is :%d\n",nvertices);
+    printf("Number of edges is :%d\n",nedges);
+    
     FILE *filepointer;
 
     // Initializing filepointer with output file for creating graph
-    filepointer = fopen("sample1.txt","w");
+    filepointer = fopen("sample.txt","w");
 
     fprintf(filepointer, "%d %d\n",nvertices,nedges);
 
-    source = rand() % nvertices + 1;
-    destination = rand() % nvertices + 1;
+    source = (rand() % nvertices) + 1;
+    destination = (rand() % nvertices) + 1;
 
     fprintf(filepointer , "%d %d\n" , source, destination);
 
 
-    int graph[nvertices][nvertices];
+    //int graph[nvertices][nvertices];
 
-    for( int i=0; i < nvertices ; i++)
+    for( int i=0; i <= nvertices ; i++)
     {
-        for( int j=0; j < nvertices ; j++)
+        for( int j=0; j <= nvertices ; j++)
         {
             graph[i][j] = 0;
         }
@@ -44,9 +49,9 @@ int main () {
     int edgesprepared = 0;
     while(edgesprepared < nedges)
     {
-        row = rand()%nvertices + 1;
-        col = rand()%nvertices + 1;
-        capacity = rand()%(maxcapacity+1);
+        row = (rand() % nvertices) + 1;
+        col = (rand() % nvertices) + 1;
+        capacity = ( rand()%(maxcapacity+1) ) + 1;
      
         if ( row != col && graph[row][col] == 0 )
         {
