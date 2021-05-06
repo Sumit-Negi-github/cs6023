@@ -10,8 +10,7 @@ int main () {
     srand(time(0));
 
     // Set number of vertices
-    nvertices = 10000;
-    // nvertices = rand() % 10001;
+    nvertices = (rand() % 10000) + 1;
 
     // Set number of edges 
     nedges = rand() % (nvertices*(nvertices-1));
@@ -24,18 +23,14 @@ int main () {
     
     FILE *filepointer;
 
-    // Initializing filepointer with output file for creating graph
-    filepointer = fopen("sample.txt","w");
+    filepointer = fopen("sample12.txt","w");
 
-    fprintf(filepointer, "%d %d\n",nvertices,nedges);
+    fprintf(filepointer, "%d %d\n", nvertices, nedges);
 
     source = (rand() % nvertices) + 1;
     destination = (rand() % nvertices) + 1;
 
     fprintf(filepointer , "%d %d\n" , source, destination);
-
-
-    //int graph[nvertices][nvertices];
 
     for( int i=0; i <= nvertices ; i++)
     {

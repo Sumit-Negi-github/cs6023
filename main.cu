@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <cuda.h>
 #include <queue>
-
+#include <chrono>
 
 
 
@@ -55,7 +55,7 @@ __global__ void printGPUBool(bool *a, int vertices){
 
 // EDMONDS KARP MAX FLOW PARALLEIZED ALGORITHM
 
-__global__ void kernel_find_augmenting_path(int vertices, int *residual_graph, bool *frontier, bool *visited, int *previous, int *curr_sync_count, int *next_sync_count, int *ownership, int *temp_ID){
+__global__ void kernel_find_augmenting_path(int vertices, int *residual_graph, bool *frontier, int *visited, int *previous,  bool *frontier_empty){
 
     int id = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -67,11 +67,10 @@ __global__ void kernel_find_augmenting_path(int vertices, int *residual_graph, b
 
             if(v == id || residual_graph[id * vertices + v] <= 0) continue;
 
-            if(!visited[v] && atomicCAS(&ownership[v], 0, 1) == 0){
+            if(atomicCAS(&visited[v], 0, 1) == 0){
                 frontier[v] = true;
                 previous[v] = id;
-                visited[v] = true;
-                atomicAdd(next_sync_count, 1);
+                *frontier_empty = false;
             }
         }
     }
@@ -151,11 +150,11 @@ void find_max_flow(int vertices, int source, int *graph, int *residual_graph, in
     }
 }
 
-void sequential_edmonds_karp(int vertices, int edges, int source, int sink, int *graph, int *result){
+int * sequential_edmonds_karp(int vertices, int edges, int source, int sink, int *graph, int *result){
 
     if (source == sink) {
         *result = -1;
-        return;
+        return graph;
     }
 
     int *residual_graph = (int *) malloc(vertices * vertices * sizeof(int));
@@ -200,13 +199,15 @@ void sequential_edmonds_karp(int vertices, int edges, int source, int sink, int 
 
     *result = 0;
     find_max_flow(vertices, source, graph, residual_graph, result);
+
+    return residual_graph;
 }
 
-void parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *cpu_graph, int *cpu_result){
+int * parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *cpu_graph, int *cpu_result){
 
     if (source == sink) {
         *cpu_result = -1;
-        return;
+        return cpu_graph;
     }
 
     int *gpu_graph;
@@ -227,77 +228,51 @@ void parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *c
     cudaMemcpy(gpu_residual_graph, cpu_residual_graph, vertices * vertices * sizeof(int), cudaMemcpyHostToDevice);
 
     bool *gpu_frontier;
-    bool *gpu_visited;
+    int *gpu_visited;
     int *cpu_previous, *gpu_previous;
-    int *cpu_curr_sync_count, *gpu_curr_sync_count; 
-    int *cpu_next_sync_count, *gpu_next_sync_count;
-    int *cpu_sync_vertex, *gpu_sync_vertex;
-    bool *gpu_allow;
+    bool *cpu_frontier_empty, *gpu_frontier_empty;
     int *cpu_min_flow, *gpu_min_flow;
-    int *gpu_ownership;
     int *cpu_path_length, *gpu_path_length;
     int *cpu_path, *gpu_path;
     int *gpu_result;
-    int *gpu_temp_id;
 
     cpu_previous = (int *) malloc(vertices * sizeof(int));
-    cpu_curr_sync_count = (int *) malloc(sizeof(int));
-    cpu_next_sync_count = (int *) malloc(sizeof(int));
-    cpu_sync_vertex = (int *) malloc(sizeof(int));
+    cpu_frontier_empty = (bool *) malloc(sizeof(bool));
     cpu_min_flow = (int *) malloc(sizeof(int));
     cpu_path_length = (int *) malloc(sizeof(int));
     cpu_path = (int *) malloc(vertices * sizeof(int));
 
     cudaMalloc(&gpu_frontier, vertices * sizeof(bool));
-    cudaMalloc(&gpu_visited, vertices * sizeof(bool));
+    cudaMalloc(&gpu_visited, vertices * sizeof(int));
     cudaMalloc(&gpu_previous, vertices * sizeof(int));
-    cudaMalloc(&gpu_curr_sync_count, sizeof(int));
-    cudaMalloc(&gpu_next_sync_count, sizeof(int));
-    cudaMalloc(&gpu_sync_vertex, sizeof(int));
-    cudaMalloc(&gpu_allow, sizeof(bool));
+    cudaMalloc(&gpu_frontier_empty, sizeof(bool));
     cudaMalloc(&gpu_min_flow, sizeof(int));
-    cudaMalloc(&gpu_ownership, vertices * sizeof(int));
     cudaMalloc(&gpu_path_length, sizeof(int));
     cudaMalloc(&gpu_path, vertices * sizeof(int));
     cudaMalloc(&gpu_result, sizeof(int));
-    cudaMalloc(&gpu_temp_id, sizeof(int));
-
-    *cpu_sync_vertex = sink;
-    *cpu_min_flow = INT_MAX;
-    // printGPU<<<1, 1>>>(gpu_residual_graph, vertices);
+    
+    // int count = 0;
 
     do{
 
-        *cpu_curr_sync_count = 1;
-        *cpu_next_sync_count = 0;
-        *cpu_path_length = 1;
-        cpu_path[0] = sink;
+        // printf("Iteration: %d\n", ++count);
 
         cudaMemset(gpu_frontier, false, vertices * sizeof(bool));
-        cudaMemset(gpu_visited, false, vertices * sizeof(bool));
+        cudaMemset(gpu_visited, 0, vertices * sizeof(int));
         cudaMemset(gpu_previous, -1, vertices * sizeof(int));
-        cudaMemset(gpu_ownership, 0, vertices * sizeof(int));
 
         cudaMemset(&gpu_frontier[source], true, sizeof(bool));
-        cudaMemset(&gpu_visited[source], true, sizeof(bool));
+        cudaMemset(&gpu_visited[source], 1, sizeof(int));
 
-        cudaMemcpy(gpu_curr_sync_count, cpu_curr_sync_count, sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(gpu_min_flow, cpu_min_flow, sizeof(int), cudaMemcpyHostToDevice);
+        *cpu_frontier_empty = false;
 
-        
-        // Find Shortest Augmenting Path
-        while(*cpu_curr_sync_count){
-            // printf("Iteration\n");
-            cudaMemset(gpu_next_sync_count, 0, sizeof(int));
-            cudaMemset(gpu_temp_id, 0, sizeof(int));
+        while(!(*cpu_frontier_empty)){
+
+            cudaMemset(gpu_frontier_empty, true, sizeof(bool));
             
-            kernel_find_augmenting_path<<<vertices, 1>>>(vertices, gpu_residual_graph, gpu_frontier, gpu_visited, gpu_previous, gpu_curr_sync_count, gpu_next_sync_count, gpu_ownership, gpu_temp_id);
-            // next_count<<<vertices, 1>>>(gpu_frontier, gpu_next_sync_count);
+            kernel_find_augmenting_path<<<vertices, 1>>>(vertices, gpu_residual_graph, gpu_frontier, gpu_visited, gpu_previous, gpu_frontier_empty);
 
-            // cudaDeviceSynchronize();
-
-            cudaMemcpy(cpu_curr_sync_count, gpu_next_sync_count, sizeof(int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(gpu_curr_sync_count, cpu_curr_sync_count, sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy(cpu_frontier_empty, gpu_frontier_empty, sizeof(bool), cudaMemcpyDeviceToHost);
         }
 
         cudaMemcpy(cpu_previous, gpu_previous, vertices * sizeof(int), cudaMemcpyDeviceToHost);
@@ -308,6 +283,9 @@ void parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *c
 
         int curr = sink;
         int prev;
+        *cpu_path_length = 1;
+        cpu_path[0] = sink;
+        *cpu_min_flow = INT_MAX;
 
         // Store Path & Min Flow
         while((prev = cpu_previous[curr]) != -1 ){
@@ -321,27 +299,20 @@ void parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *c
             curr = prev;
         }
 
-        // for(int i=0; i<*cpu_path_length; ++i){
-        //     printf("%d ", cpu_path[i]);
-        // }
-        // printf("\nMin Flow: %d\n", *cpu_min_flow);
-
         cudaMemcpy(gpu_min_flow, cpu_min_flow, sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(gpu_path_length, cpu_path_length, sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(gpu_path, cpu_path, vertices * sizeof(int), cudaMemcpyHostToDevice);
     
         kernel_update_residual_graph<<<(*cpu_path_length) - 1, 1>>>(vertices, gpu_residual_graph, gpu_path, gpu_min_flow);
 
         cudaMemcpy(cpu_residual_graph, gpu_residual_graph, vertices * vertices * sizeof(int), cudaMemcpyDeviceToHost);
-
-        // printCPU(cpu_residual_graph, vertices);
-        // printf("\n\n");
     
     }while(cpu_previous[sink] != -1);
     
     cudaMemset(gpu_result, 0, sizeof(int));
     kernel_find_max_flow<<<vertices, 1>>>(vertices, source, gpu_graph, gpu_residual_graph, gpu_result);
     cudaMemcpy(cpu_result, gpu_result, sizeof(int), cudaMemcpyDeviceToHost);
+
+    return cpu_residual_graph;
 }
 
 
@@ -387,10 +358,8 @@ __global__ void kernel_find_level_path(int vertices, int sink, int *residual_gra
 
             if(v == id || residual_graph[id * vertices + v] <= 0) continue;
 
-            if(!visited[v]){
+            if(atomicCAS(&level[v], -1, lev) == -1){
                 frontier[v] = true;
-                visited[v] = true;
-                level[v] = lev;
                 *frontier_empty = false;
             }        
         }
@@ -410,6 +379,7 @@ int sendFlow(int vertices, int u, int sink, int *residual_graph, int *level, int
 			 	int curr_flow = min(flow, residual_graph[u * vertices + v]);
 
 			    int min_cap = sendFlow(vertices, v, sink, residual_graph, level, curr_flow);
+
 			    if (min_cap > 0)
 			    {
                     residual_graph[u * vertices + v] -= min_cap;
@@ -422,53 +392,45 @@ int sendFlow(int vertices, int u, int sink, int *residual_graph, int *level, int
 	return 0;
 }
 
-void sequential_dinic(int vertices, int source, int sink, int *cpu_graph, int *cpu_result){
+int * sequential_dinic(int vertices, int source, int sink, int *graph, int *result){
 
     if (source == sink) {
-        *cpu_result = -1;
-        return;
+        *result = -1;
+        return graph;
     }
 
-    int *gpu_graph;
-    int *cpu_residual_graph, *gpu_residual_graph;
-    int *cpu_level, *gpu_level;
-    
-    cpu_residual_graph = (int *) malloc(vertices * vertices * sizeof(int));
-    cpu_level = (int *) malloc(vertices * sizeof(int));
-
-    cudaMalloc(&gpu_graph, vertices * vertices * sizeof(int));
-    cudaMalloc(&gpu_residual_graph, vertices * vertices * sizeof(int));
-    cudaMalloc(&gpu_level, vertices * sizeof(int));
+    int *residual_graph = (int *) malloc(vertices * vertices * sizeof(int));
+    int *level = (int *) malloc(vertices * sizeof(int));
 
     for(int i=0; i<vertices; ++i){
         for(int j=0; j<vertices; ++j){
-            cpu_residual_graph[i * vertices + j] = cpu_graph[i * vertices + j];
+            residual_graph[i * vertices + j] = graph[i * vertices + j];
         }
     }
     
-    *cpu_result = 0;
+    *result = 0;
 
     // int count = 0;
 
-	while (find_level_path(vertices, source, sink, cpu_residual_graph, cpu_level)){
-		
+	while (find_level_path(vertices, source, sink, residual_graph, level)){
+
         // printf("Iteration %d\n", ++count);
 
-		while (int flow = sendFlow(vertices, source, sink, cpu_residual_graph, cpu_level, INT_MAX)){
+		while (int flow = sendFlow(vertices, source, sink, residual_graph, level, INT_MAX)){
             // printf("Flow: %d\n", flow);
-            *cpu_result += flow;
+            *result += flow;
         }
 	}
+
+    return residual_graph;
 }
 
-void parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cpu_result){
+int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cpu_result){
 
     if (source == sink) {
         *cpu_result = -1;
-        return;
+        return cpu_graph;
     }
-
-    int *gpu_graph;
     int *cpu_residual_graph, *gpu_residual_graph;
     int *cpu_level, *gpu_level;
     bool *gpu_frontier;
@@ -479,14 +441,11 @@ void parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cpu
     cpu_level = (int *) malloc(vertices * sizeof(int));
     cpu_frontier_empty = (bool *) malloc(sizeof(bool));
 
-    cudaMalloc(&gpu_graph, vertices * vertices * sizeof(int));
     cudaMalloc(&gpu_residual_graph, vertices * vertices * sizeof(int));
     cudaMalloc(&gpu_level, vertices * sizeof(int));
     cudaMalloc(&gpu_frontier, vertices * sizeof(bool));
     cudaMalloc(&gpu_visited, vertices * sizeof(bool));
     cudaMalloc(&gpu_frontier_empty, sizeof(bool));
-    
-    // *cpu_sync_vertex = sink;
 
     for(int i=0; i<vertices; ++i){
         for(int j=0; j<vertices; ++j){
@@ -498,7 +457,7 @@ void parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cpu
     
     *cpu_result = 0;
 
-    // int count = 0;
+    int count = 0;
 
     do{
 
@@ -531,16 +490,20 @@ void parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cpu
             break;
         }
 
-        // printf("Iteration %d\n", ++count);
+        printf("Iteration %d\n", ++count);
 
         while (int flow = sendFlow(vertices, source, sink, cpu_residual_graph, cpu_level, INT_MAX)){
-            // printf("Flow: %d\n", flow);
+            printf("Flow: %d\n", flow);
             *cpu_result += flow;
         }
+
+        printf("Total Flow: %d\n", *cpu_result);
 
         cudaMemcpy(gpu_residual_graph, cpu_residual_graph, vertices * vertices * sizeof(int), cudaMemcpyHostToDevice);
 
     }while(!(cpu_level[sink] < 0));
+
+    return cpu_residual_graph;
 }
 
 
@@ -567,44 +530,63 @@ int main(int argc, char **argv){
     fscanf(fin, "%d %d %d %d", &vertices, &edges, &source, &sink);
 
     // Declaring Variable
-    int *cpu_graph, *gpu_graph, *cpu_ff_graph, *gpu_ff_graph;
+    int *cpu_graph, *gpu_graph;
     int *cpu_result, *gpu_result;
 
     // Initialising Variables
     cpu_graph = (int *) malloc(vertices * vertices * sizeof(int));
-    cpu_ff_graph = (int *) malloc(2 * vertices * vertices * sizeof(int));
     cpu_result = (int *) malloc(sizeof(int));
 
     cudaMalloc(&gpu_graph, vertices * vertices * sizeof(int));
-    cudaMalloc(&gpu_ff_graph, 2 * vertices * vertices * sizeof(int));
     cudaMalloc(&gpu_result, sizeof(int));
 
     memset(cpu_graph, 0, vertices * vertices * sizeof(int));
-    memset(cpu_ff_graph, 0, 2 * vertices * vertices * sizeof(int));
 
     // Taking Input & Generating Graph as Ajacency Matrix
     for(int i=0; i<edges; ++i){
         int u, v, c;
         fscanf(fin, "%d %d %d", &u, &v, &c);
         cpu_graph[(u - 1) * vertices + (v - 1)] += c;
-        cpu_ff_graph[(u - 1) * vertices * 2 + (v - 1) * 2 + 0] += c;
-        cpu_ff_graph[(u - 1) * vertices * 2 + (v - 1) * 2 + 1] += 0;
     }
-
-    // cudaMemcpy(gpu_graph, cpu_graph, vertices * vertices * sizeof(int), cudaMemcpyHostToDevice);
     
     // Rigved's Part
-    sequential_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
-    // edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
-    // sequential_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
-    // parallel_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
+    
+    int *residual_graph;
+    
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // Sumit's Part
-    // push_relabel<<<1, 1>>>(gpu_result);
+    // residual_graph = sequential_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
+    // residual_graph = parallel_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
+    // residual_graph = sequential_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
+    // residual_graph = parallel_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
 
-    // Writing result back to CPU
-    //cudaMemcpy(cpu_result, gpu_result, sizeof(int), cudaMemcpyDeviceToHost);
-    printf("Max Flow is: %d\n", *cpu_result);
+    auto stop = std::chrono::high_resolution_clock::now();
+
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+
+    // Writing result back
+    printf("Max Flow is: %d.\n", *cpu_result);
+    printf("Time taken is %lld microseconds.\n", duration.count());
+
+    fprintf(fout, "%d\n\n", *cpu_result);
+
+    for(int i=0; i<vertices; ++i){
+        for(int j=0; j<vertices; ++j){
+            if(cpu_graph[i * vertices + j] > 0){
+                int f = cpu_graph[i * vertices + j] - residual_graph[i * vertices + j];
+                if(f < 0){
+                    fprintf(fout, "%d ", 0);    
+                }
+                else{
+                    fprintf(fout, "%d ", f);
+                }
+            }
+            else{
+                fprintf(fout, "%d ", 0);
+            }
+        }
+        fprintf(fout, "\n");
+    }
 
     fclose(fin);
     fclose(fout);
