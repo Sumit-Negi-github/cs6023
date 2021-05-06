@@ -320,6 +320,26 @@ int * parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *
 
 // DININC'S MAX FLOW PARALLELIZED ALGORITHM
 
+__global__ void kernel_find_level_path(int vertices, int sink, int *residual_graph, bool *frontier, int *level, int lev, bool *frontier_empty){
+
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(frontier[id]){
+        
+        frontier[id] = false;
+
+        for(int v=0; v<vertices; ++v){
+
+            if(v == id || residual_graph[id * vertices + v] <= 0) continue;
+
+            if(atomicCAS(&level[v], -1, lev) == -1){
+                frontier[v] = true;
+                *frontier_empty = false;
+            }        
+        }
+    }
+}
+
 bool find_level_path(int vertices, int source, int sink, int *residual_graph, int *level){
     
     memset(level, -1, vertices * sizeof(int));
@@ -344,26 +364,6 @@ bool find_level_path(int vertices, int source, int sink, int *residual_graph, in
     }
 	
     return level[sink] < 0 ? false : true ;
-}
-
-__global__ void kernel_find_level_path(int vertices, int sink, int *residual_graph, bool *frontier, bool *visited, int *level, int lev, bool *frontier_empty){
-
-    int id = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if(frontier[id]){
-        
-        frontier[id] = false;
-
-        for(int v=0; v<vertices; ++v){
-
-            if(v == id || residual_graph[id * vertices + v] <= 0) continue;
-
-            if(atomicCAS(&level[v], -1, lev) == -1){
-                frontier[v] = true;
-                *frontier_empty = false;
-            }        
-        }
-    }
 }
 
 int sendFlow(int vertices, int u, int sink, int *residual_graph, int *level, int flow){
@@ -431,10 +431,10 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
         *cpu_result = -1;
         return cpu_graph;
     }
+
     int *cpu_residual_graph, *gpu_residual_graph;
     int *cpu_level, *gpu_level;
     bool *gpu_frontier;
-    bool *gpu_visited;
     bool *cpu_frontier_empty, *gpu_frontier_empty;
     
     cpu_residual_graph = (int *) malloc(vertices * vertices * sizeof(int));
@@ -444,7 +444,6 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
     cudaMalloc(&gpu_residual_graph, vertices * vertices * sizeof(int));
     cudaMalloc(&gpu_level, vertices * sizeof(int));
     cudaMalloc(&gpu_frontier, vertices * sizeof(bool));
-    cudaMalloc(&gpu_visited, vertices * sizeof(bool));
     cudaMalloc(&gpu_frontier_empty, sizeof(bool));
 
     for(int i=0; i<vertices; ++i){
@@ -457,27 +456,24 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
     
     *cpu_result = 0;
 
-    int count = 0;
+    // int count = 0;
+    int empty_runs = 0;
 
     do{
 
-        *cpu_frontier_empty = false;
-
         cudaMemset(gpu_frontier, false, vertices * sizeof(bool));
-        cudaMemset(gpu_visited, false, vertices * sizeof(bool));
-
-        cudaMemset(&gpu_frontier[source], true, sizeof(bool));
-        cudaMemset(&gpu_visited[source], true, sizeof(bool));
         cudaMemset(gpu_level, -1, vertices * sizeof(int));
+        cudaMemset(&gpu_frontier[source], true, sizeof(bool));
         cudaMemset(&gpu_level[source], 0, sizeof(int));
 
         int lev = 1;
+        *cpu_frontier_empty = false;
         
         while(!(*cpu_frontier_empty)){
             
             cudaMemset(gpu_frontier_empty, true, sizeof(bool));
             
-            kernel_find_level_path<<<vertices, 1>>>(vertices, sink, gpu_residual_graph, gpu_frontier, gpu_visited, gpu_level, lev, gpu_frontier_empty);
+            kernel_find_level_path<<<vertices, 1>>>(vertices, sink, gpu_residual_graph, gpu_frontier, gpu_level, lev, gpu_frontier_empty);
 
             cudaMemcpy(cpu_frontier_empty, gpu_frontier_empty, sizeof(bool), cudaMemcpyDeviceToHost);
 
@@ -486,22 +482,48 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
 
         cudaMemcpy(cpu_level, gpu_level, vertices * sizeof(int), cudaMemcpyDeviceToHost);
 
-        if(cpu_level[sink] < 0){
+        if(empty_runs == 2){
+            memset(cpu_level, -1, vertices * sizeof(int));
+            cpu_level[source] = 0;
+            
+            std::queue<int> queue;
+            queue.push(source);
+
+            while (!queue.empty())
+            {
+                int u = queue.front();
+                queue.pop();
+
+                for (int v=0; v<vertices; ++v)
+                {
+                    if (u != v && cpu_residual_graph[u * vertices + v] > 0 && cpu_level[v] < 0)
+                    {
+                        cpu_level[v] = cpu_level[u] + 1;
+                        queue.push(v);
+                    }
+                }
+            }
+        }
+
+        if(cpu_level[sink] == -1){
             break;
         }
 
-        printf("Iteration %d\n", ++count);
+        // printf("Iteration %d\n", ++count);
 
         while (int flow = sendFlow(vertices, source, sink, cpu_residual_graph, cpu_level, INT_MAX)){
-            printf("Flow: %d\n", flow);
+            empty_runs = 0;
+            // printf("Flow: %d\n", flow);
             *cpu_result += flow;
         }
 
-        printf("Total Flow: %d\n", *cpu_result);
+        ++empty_runs;
+
+        // printf("Total Flow: %d\n", *cpu_result);
 
         cudaMemcpy(gpu_residual_graph, cpu_residual_graph, vertices * vertices * sizeof(int), cudaMemcpyHostToDevice);
 
-    }while(!(cpu_level[sink] < 0));
+    }while(!(cpu_level[sink] == -1));
 
     return cpu_residual_graph;
 }
@@ -553,20 +575,33 @@ int main(int argc, char **argv){
     
     int *residual_graph;
     
-    auto start = std::chrono::high_resolution_clock::now();
-
-    // residual_graph = sequential_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
-    // residual_graph = parallel_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
-    // residual_graph = sequential_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
-    // residual_graph = parallel_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
-
-    auto stop = std::chrono::high_resolution_clock::now();
-
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-
-    // Writing result back
+    auto start1 = std::chrono::high_resolution_clock::now();
+    residual_graph = sequential_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
+    auto stop1 = std::chrono::high_resolution_clock::now();
+    auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(stop1 - start1);
     printf("Max Flow is: %d.\n", *cpu_result);
-    printf("Time taken is %lld microseconds.\n", duration.count());
+    printf("Time taken by SEQUENTIAL EDONDS KARP is %lld microseconds.\n", duration1.count());
+
+    auto start2 = std::chrono::high_resolution_clock::now();
+    residual_graph = parallel_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
+    auto stop2 = std::chrono::high_resolution_clock::now();
+    auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);
+    printf("Max Flow is: %d.\n", *cpu_result);
+    printf("Time taken by PARALLELIZED EDONDS KARP is %lld microseconds.\n", duration2.count());
+    
+    auto start3 = std::chrono::high_resolution_clock::now();
+    residual_graph = sequential_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
+    auto stop3= std::chrono::high_resolution_clock::now();
+    auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(stop3 - start3);
+    printf("Max Flow is: %d.\n", *cpu_result);
+    printf("Time taken by SEQUENTIAL DINIC is %lld microseconds.\n", duration3.count());
+
+    auto start4 = std::chrono::high_resolution_clock::now();
+    residual_graph = parallel_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
+    auto stop4 = std::chrono::high_resolution_clock::now();
+    auto duration4 = std::chrono::duration_cast<std::chrono::microseconds>(stop4 - start4);
+    printf("Max Flow is: %d.\n", *cpu_result);
+    printf("Time taken by PARALLELIZED DINIC %lld microseconds.\n", duration4.count());
 
     fprintf(fout, "%d\n\n", *cpu_result);
 

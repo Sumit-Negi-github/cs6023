@@ -23,7 +23,7 @@ int main () {
     
     FILE *filepointer;
 
-    filepointer = fopen("sample12.txt","w");
+    filepointer = fopen("sample.txt","w");
 
     fprintf(filepointer, "%d %d\n", nvertices, nedges);
 
