@@ -1,3 +1,8 @@
+/* *********************************************    MAX FLOW ALGORITHM IMPLEMENTATION   *********************************************  */
+
+
+// Including Required Header files 
+
 #include <stdio.h>
 #include <cuda.h>
 #include <queue>
@@ -5,7 +10,7 @@
 
 
 
-// HELPER FUNCTIONS
+/* *********************************************    Helper Functions   *********************************************  */
 
 void printCPU(int *graph, int vertices){
     for(int i=0; i<vertices; ++i){
@@ -23,7 +28,7 @@ void printCPUIntArray(int *a, int vertices){
     printf("\n");
 }
 
-__global__ void printGPU(int *graph, int vertices){
+__device__ void printGPU(int *graph, int vertices){
     for(int i=0; i<vertices; ++i){
         for(int j=0; j<vertices; ++j){
             printf("%d ", graph[i * vertices + j]);
@@ -51,8 +56,79 @@ __global__ void printGPUBool(bool *a, int vertices){
 }
 
 
+void matrixprinter( int *matrix , int x, int y)
+{
+    /* A general function to print any 1d array /2d array  .
+       Arguments :   If array is 1-d of size n    ======>  pass x = n and y = 0
+                     If array is 2-d of size n*m  ======>  pass x = n and y = m
+ 
+      ( However , I have not used any 2-d array in the code, but this is just for visualisation of adjacency matrix )
+    */
+ 
+    if(y != 0)                    // 2-d array
+    {
+        for(int i=0; i<x; i++)
+        {
+            for(int j=0; j<y; j++)
+                printf("%d ",matrix[i*y + j]);
+            printf("\n");
+        }
+    }
+    else                         // 1-d array
+    {
+        for(int i=0; i<x; i++)
+            printf("%d ",matrix[i]) ;
+        printf("\n");
+    }
+ 
+}
+
+// Function to print the flow in the edges
+void final_edge_flow_printer(int *cpu_graph, int *cpu_res_graph, int vertices)
+{
+    /* Function to print the final edge flow in the edges of the graph
+       Arguments : cpu_graph : Graph on the cpu
+                   cpu_res_graph :  Residual graph on cpu
+                   vertices : Number of vertices in the graph
+    */
+ 
+    for(int i=0; i<vertices; i++)
+    {
+      for(int j=0; j<vertices; j++)
+      {
+          int diff = cpu_graph[i*vertices+j] - cpu_res_graph[i*vertices+j] ;
+          int maximum = diff>0 ? diff : 0;
+          printf("%d ", maximum);
+      }
+      printf("\n");
+    }
+}
 
 
+// Function to reverify that our algorithm has computed correct
+void sink_flow_calc(int *cpu_graph, int *cpu_res_graph, int vertices , int sink)
+{
+    /* Function to compute the final flow to the sink vertex
+       Arguments : cpu_graph : Graph on the cpu
+                   cpu_res_graph :  Residual graph on cpu
+                   vertices : Number of vertices in the graph
+                    sink  : sink vertex
+    */
+ 
+   int total = 0 ;
+    for(int i=0; i<vertices; i++)
+    {      
+            int diff = cpu_graph[i*vertices+sink] - cpu_res_graph[i*vertices+sink] ;
+            int maximum = diff>0 ? diff : 0;
+            total += maximum ;
+             
+    }
+    printf("Total flow to the sink is %d\n", total) ;
+}
+
+
+
+/*  ***************************   EDMONDS KARP MAX FLOW PARALLELIZED ALGORITHM    ***************************  */
 // EDMONDS KARP MAX FLOW PARALLEIZED ALGORITHM
 
 __global__ void kernel_find_augmenting_path(int vertices, int *residual_graph, bool *frontier, int *visited, int *previous,  bool *frontier_empty){
@@ -317,7 +393,7 @@ int * parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *
 
 
 
-
+/*  *******************************   DININC'S MAX FLOW PARALLELIZED ALGORITHM    *******************************  */
 // DININC'S MAX FLOW PARALLELIZED ALGORITHM
 
 __global__ void kernel_find_level_path(int vertices, int sink, int *residual_graph, bool *frontier, int *level, int lev, bool *frontier_empty){
@@ -391,6 +467,7 @@ int sendFlow(int vertices, int u, int sink, int *residual_graph, int *level, int
 	}
 	return 0;
 }
+
 
 int * sequential_dinic(int vertices, int source, int sink, int *graph, int *result){
 
@@ -530,14 +607,550 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
 
 
 
+/*  *********************************************    PUSH RELABEL --Sequential Max Flow Algorithm    *********************************************  */
 
-// MAIN 
+// Function computing Maxflow sequentially (Without GPU)
+int * sequential_push_relabel(int *cpu_graph, int *cpu_result,  int vertices,  int source, int sink )
+{
+    /*  This  function will compute the maxflow sequentially. All the task will be done on cpu
+        Arguments : cpu_graph : graph on cpu
+                    cpu_result = This will finally store the final maxflow computed by the algorithm
+                    source : source vertex 
+                    sink : sink vertex  
+                    vertices  : Number of vertices in the graph
+ 
+        Return Value : Residual Graph (in the form of matrix)
+    */
+ 
+    //printf("\n Function Invoked : Sequential Push Relabel \n");
+
+    int *residual_graph ;
+    int *height ;
+    int *excess_flow ;
+ 
+    residual_graph = (int *)malloc(vertices*vertices*sizeof(int));
+    height = (int *)malloc(vertices*sizeof(int));
+    excess_flow = (int *)malloc(vertices*sizeof(int));
+    
+    
+    // Initializing the values in the residual graph
+    for(int i=0; i<vertices; i++)
+    {
+        for(int j=0; j<vertices; j++)
+        {
+            residual_graph[i * vertices + j ] = cpu_graph[ i * vertices + j ] ;
+        }
+    }
+
+
+    // Assigning height as 0 to all the vertices  . 
+    for(int i=0; i<vertices; i++)
+    {
+        height[i] = 0;
+    }
+
+    // Source is initialized as height equal to number of vertices
+    height[source] = vertices;
+
+
+    // Initializing  excess flow of all the vertices as 0 . 
+    for(int i=0; i<vertices; i++)
+    {
+        excess_flow[i] = 0;
+    }
+
+
+    // This for loop will push the flow in all the outgoing edges from the source. Also, flow equal to the capacity of edge will be pushed.
+    for( int i = 0; i<vertices; i++)
+    {
+        
+        if(cpu_graph[source*vertices+i] > 0)
+        {
+            int k = cpu_graph[source*vertices+i] ;
+
+            residual_graph[source*vertices + i] = 0;
+          
+            residual_graph [i*vertices + source] =cpu_graph[i*vertices+source] +  k;
+          
+            excess_flow[i] = k;
+
+        }
+    }
+
+ 
+    int flag  = 1;
+ 
+    while (flag)
+    {
+   
+        int push_flag = 0, relabel_flag = 0;
+     
+        for(int i=0; i < vertices; i++)
+        {
+            int min_height_neighbour = INT_MAX;
+          
+            if( i != source && i!= sink && excess_flow[i] > 0 )
+            {
+                for(int j =0; j<vertices; j++)
+                {
+                    if( i!=j && residual_graph[i*vertices+j] > 0)
+                    {
+                        if (height[j] < height[i])
+                        {
+                            // do push operation on [i,j] ;
+                         
+                            push_flag = 1;
+                            
+                            int possible_flow = (residual_graph[i*vertices+j] < excess_flow[i] ? residual_graph[i*vertices+j] : excess_flow[i]);
+                         
+                            excess_flow[i] -= possible_flow;
+                         
+                            excess_flow[j] += possible_flow;
+                         
+                            residual_graph[i*vertices+j] -= possible_flow;
+                         
+                            residual_graph[j*vertices+i] += possible_flow;
+                         
+                            break;
+                        }
+                        if( height[j] < min_height_neighbour)
+                        {
+                            min_height_neighbour = height[j] ;
+                         
+                            relabel_flag = 1;
+                        }
+                    }
+                }
+             
+              if (push_flag == 0 &&  relabel_flag == 1)
+                {
+
+                    // Do relabel operation on vertex i
+                 
+                    height[i] = min_height_neighbour + 1;
+                    
+                }
+                
+             if(push_flag == 1 || relabel_flag == 1)
+                  break;
+             
+            }
+            
+        }
+        if (push_flag == 1 || relabel_flag == 1)
+                continue;
+        else
+          {
+                flag = 0;
+          }
+     
+    }
+
+    //printf("Final edge flow in graph:\n");
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);
+ 
+    *cpu_result = excess_flow[sink];
+    return residual_graph ;
+}
+
+
+
+/*  *********************************************    PUSH RELABEL --Parallelized Max Flow Algorithm    *********************************************  */
+
+// Push Relabel Kernel on the GPU
+__global__ void kernel_push_relabel(int *gpu_res_graph, int *gpu_node_excess_flow, int *gpu_height, int vertices , int source, int sink)
+{
+    
+    /*  Push Relabel kernel  : This will be envoked with number of threads equal to number of vertices in the graph.
+        Arguments :   gpu_res_graph : Residual graph on the GPU  
+                      gpu_node_excess_flow : Excess flow remaining on vertices  
+                      gpu_height : height of the vertices 
+                      vertices : Number of vertices in the graph
+                      source : source vertex
+                      sink : sink vertex
+    */
+ 
+    //printf("\n Kernel invoked : PUSH Relabel --Parallelized version : \n");
+
+
+    // Calculating the id of the thread
+    int id = blockIdx.x * blockDim.x + threadIdx.x ;
+    
+    //Below if block will be executed by thread other than source and sink vertex
+    if( id!= source && id!= sink )
+    {
+        // Every thread reaches inside executes the below while block for cycle times ( can be adjusted ).
+        int cycle = vertices;
+     
+        while (cycle > 0)
+        {
+            
+            if ( gpu_node_excess_flow[id] > 0 && gpu_height[id]<vertices)
+            {
+                // h_prime will basically contains height of neighbour with minimum height .
+                // The vertex corresponding to h_prime is v_prime
+                // e_prime will contain the excess flow of the vertex corresponding to thread
+             
+                int e_prime = gpu_node_excess_flow[id] ;
+                int h_prime = INT_MAX;
+                int v_prime ;
+             
+                for(int j=0; j<vertices; j++)
+                    {
+                        if( gpu_res_graph[id*vertices +j] > 0)
+                        {
+                            int temp_height = gpu_height[j];
+                            if( temp_height < h_prime )
+                            {
+                                h_prime = temp_height ;
+                                v_prime = j ;
+                            }
+                        }
+                    }
+                
+
+                // if  smallest height neighbour has height smaller than vertex(corresponding to thread id) , then send the flow to that neighbour.
+                if (gpu_height[id] > h_prime)
+                {
+                    int k = e_prime ;
+                    k = e_prime < gpu_res_graph[id*vertices+v_prime] ? e_prime :gpu_res_graph[id*vertices+v_prime];
+                 
+                    atomicAdd(&gpu_res_graph[v_prime*vertices + id ], k);
+                    atomicSub(&gpu_res_graph[id*vertices + v_prime ], k) ;
+                    atomicAdd( &gpu_node_excess_flow[v_prime], k);
+                    atomicSub( &gpu_node_excess_flow[id], k);                    
+                }
+                else             // otherwise update the height of vertex(id)
+                {
+                    gpu_height[id] = h_prime + 1;
+                }
+            }
+         
+            cycle--;
+        }
+    }  
+} 
+
+
+// Global relabelling step 1 kernel on GPU
+__global__ void GR_step1_kernel( int *gpu_graph, int *gpu_node_excess_flow , int *gpu_res_graph, int *gpu_height, int vertices )
+{
+    /*  This is step 1 of Global Relabelling (Hence named GR_step1_kernel)
+        This will be envoked with number of threads equal to number of vertices in the graph.
+ 
+        Arguments : gpu_graph  : original graph on the the gpu
+                    gpu_node_excess_flow : Excess flow remaining on vertices 
+                    gpu_res_graph : Residual graph on the GPU 
+                    gpu_height : height of the vertices 
+                    vertices  : Number of vertices in the graph
+    */
+ 
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if ( id < vertices)
+    {
+        for( int j = id+1 ; j<vertices; j++)
+        {
+          
+                if(  (gpu_height[id] > gpu_height[j] + 1) && (gpu_graph[id*vertices+j] > 0 ) )
+                {
+                    gpu_node_excess_flow[id] = gpu_node_excess_flow[id] - gpu_res_graph[id*vertices+j];
+
+                    atomicAdd(&gpu_node_excess_flow[j] , gpu_res_graph[id*vertices+j]);
+
+                    atomicAdd(&gpu_res_graph[j*vertices+id] , gpu_res_graph[id*vertices+j]);
+
+                    gpu_res_graph[id*vertices+j] = 0;
+                }
+                else if ( (gpu_height[j] > gpu_height[id] + 1 ) && (gpu_graph[j*vertices+id] > 0 ) ) 
+                {
+                    atomicSub(&gpu_node_excess_flow[j] , gpu_res_graph[j*vertices+id]);
+
+                    gpu_node_excess_flow[id] = gpu_node_excess_flow[id] + gpu_res_graph[j*vertices+id];
+
+                    gpu_res_graph[id*vertices+j] = gpu_res_graph[id*vertices+j] + gpu_res_graph[j*vertices+id];
+
+                    atomicSub(&gpu_res_graph[j*vertices+id], gpu_res_graph[j*vertices+id]);
+                } 
+                
+        }
+    }
+}
+
+
+
+// BFS Parallelized kernel on the GPU
+__global__ void GR_step2_kernel(int *gpu_res_graph, int *queue, int *duplicate_queue, int *visited, int *gpu_height, int vertices, int *reiterate, int sink)
+{
+
+   /*  This is step 2 of Global Relabelling (Hence named GR_step2_kernel) .
+       This kernel is basically do BFS(breadth first search) in Residual Graph with starting vertex as sink. 
+       This kernel will assign height labels to the vertex equal to the length of path from sink to that vertex .
+ 
+       This will be envoked with number of threads equal to number of vertices in the graph.
+ 
+        Arguments : gpu_res_graph : Residual graph on the GPU 
+                    queue : This is an array which keeps track of the nodes in the current level of BFS. For those nodes value will be 1 , for other 0.
+                    duplicate_queue : This is exactly same before starting of kernel (i.e. before every level) . 
+                                      This is just for avoiding atomics as queue gets updated inside the kernel.
+                    gpu_height : height of the vertices 
+                    vertices  : Number of vertices in the graph
+                    reiterate : This will be set ( = 1) if there is atleast a node in next level of BFS. i.e. tells whether to continue BFS or not.
+                    sink : sink vertex
+    */
+    
+	int id = threadIdx.x + blockIdx.x * blockDim.x;
+  if(id < vertices)
+  {
+      if (duplicate_queue[id] == 1 && visited[id] == 0)
+      {
+
+            if(id == sink)
+            gpu_height[sink] = 0;
+            visited[id] = 1;
+
+            queue[id] = 0;
+       
+            int neighbor_height = gpu_height[id] +1;
+
+            for (int i = 0; i < vertices; i++) 
+            {
+                if(visited[i] == 0 && duplicate_queue[i] !=1)
+                {
+                      if(gpu_res_graph[i*vertices+id] > 0 )
+                      {         
+                            gpu_height[i] = neighbor_height;      
+                            queue[i] = 1;
+                            *reiterate= 1;
+                      } 
+                } 
+            }
+        }
+    }
+}
+
+
+
+// Global Relabel Function on the CPU
+void global_relabel(int *gpu_graph, int *cpu_node_excess_flow, int *gpu_node_excess_flow, int *gpu_res_graph, int *gpu_height, int *cpu_height, int *cpu_excess_total, int source , int sink, int vertices)
+ {
+    
+    //printf("function invoked: global relabel\n");
+
+    /* Global relabelling step 1 */
+      GR_step1_kernel<<<vertices,1>>>( gpu_graph, gpu_node_excess_flow , gpu_res_graph, gpu_height, vertices );
+      cudaDeviceSynchronize();
+
+
+      // Copying changed contents from gpu to cpu
+      cudaMemcpy(cpu_height, gpu_height, vertices*sizeof(int) , cudaMemcpyDeviceToHost);
+      cudaMemcpy(cpu_node_excess_flow, gpu_node_excess_flow, vertices*sizeof(int) , cudaMemcpyDeviceToHost);
+
+
+    /* Global Relabelling Step 2 : Assign new heights by  BFS from sink to all vertices*/
+
+    // Creating visited array as we do in BFS, to track care of visited vertices. hvisited is for cpu and dvisited is for gpu
+    // queue and duplicate queue will contain 1 value for vertex  present at a level in BFS . For other , it will be 0.
+  
+    int *dvisited , *hvisited , *queue, *duplicate_queue;
+    
+    // Allocating memory to the variables 
+    hvisited = (int *)malloc(vertices*sizeof(int));
+    cudaMalloc(&dvisited,vertices*sizeof(int));
+  
+    cudaMalloc(&queue,vertices*sizeof(int));
+    cudaMalloc(&duplicate_queue,vertices*sizeof(int));
+
+    // Initially all the vertices are unvisited
+    for(int i=0; i<vertices; i++)
+      {
+            hvisited[i] = 0;
+      }
+  
+    cudaMemcpy(dvisited, hvisited, vertices * sizeof(int), cudaMemcpyHostToDevice);
+  
+    // hvisited is set to 1 , because we are gonna start the BFS. Hence its like we have pushed starting point in queue. 
+    hvisited[sink] = 1;
+  
+    cudaMemcpy(queue, hvisited, vertices * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(duplicate_queue, hvisited, vertices * sizeof(int), cudaMemcpyHostToDevice);
+    
+    // Creating variable for tracking till when to iterate in the loop. reiterate = 1, if still more levels to go, otherwise 0.  reiterate for cpu. diterate for gpu.
+    int *dreiterate, *hreiterate, *zero;
+  
+    hreiterate = (int *)malloc(sizeof(int));
+    cudaMalloc(&dreiterate,sizeof(int));
+  
+    zero = (int *)malloc(sizeof(int));
+    *zero = 0;
+  
+    // Initially we have to iterate.
+    *hreiterate = 1;
+
+    while(*hreiterate)
+    {    
+        cudaMemcpy(dreiterate,zero,sizeof(int),cudaMemcpyHostToDevice);
+
+        // kernel call to compute BFS at a particular level. 
+     
+        GR_step2_kernel<<<vertices,1>>>(gpu_res_graph, queue, duplicate_queue, dvisited, gpu_height, vertices, dreiterate, sink);
+        cudaDeviceSynchronize();
+     
+     
+        cudaMemcpy(duplicate_queue, queue, vertices * sizeof(int), cudaMemcpyDeviceToHost);
+        
+        cudaMemcpy(cpu_height, gpu_height, vertices * sizeof(int), cudaMemcpyDeviceToHost);
+     
+        cudaMemcpy(hreiterate, dreiterate, sizeof(int), cudaMemcpyDeviceToHost);
+
+    }
+
+
+    cudaMemcpy(cpu_height,gpu_height,vertices*sizeof(int),cudaMemcpyDeviceToHost);
+    cudaMemcpy(hvisited,dvisited,vertices*sizeof(int),cudaMemcpyDeviceToHost);
+
+
+
+    /* Global Relabelling Step 3 : Setting excess flow of those vertices to 0 from where we no path to sink in residual graph */
+  
+    for(int i=0 ; i<vertices ; i++)
+    {
+            if( hvisited[i] == 0 )
+            {
+                    cpu_height[i] = vertices;
+                    *cpu_excess_total -= cpu_node_excess_flow[i] ;
+                    cpu_node_excess_flow[i] = 0;
+            }
+    }
+    
+}
+
+
+
+int * push_relabel (int *cpu_graph, int *gpu_graph , int *cpu_result, int vertices,  int source, int sink)
+{
+    /*  This  function will call the push relabel function
+ 
+        Arguments : cpu_graph : graph on cpu
+                    gpu_graph  : graph on the the gpu
+                    cpu_result : will point to location storing the final maxflow value
+                    source : source vertex 
+                    sink : sink vertex  
+                    vertices  : Number of vertices in the graph
+
+        Return value : Residual Graph (In the form of matrix)
+    */
+
+
+    //printf("\n Function Invoked : CPU push Relabel caller \n");
+
+    int *cpu_res_graph, *gpu_res_graph;
+    int *cpu_height , *gpu_height;
+    int *cpu_node_excess_flow, *gpu_node_excess_flow;
+    int *cpu_excess_total;
+
+ 
+ 
+    cpu_res_graph = (int *)malloc(vertices*vertices*sizeof(int));
+    cpu_height = (int *)malloc(vertices*sizeof(int));
+    cpu_node_excess_flow = (int *)malloc(vertices*sizeof(int));
+    cpu_excess_total = (int *)malloc(sizeof(int));
+    
+    cudaMalloc(&gpu_res_graph, vertices*vertices*sizeof(int));
+    cudaMalloc(&gpu_height, vertices*sizeof(int));
+    cudaMalloc(&gpu_node_excess_flow, vertices*sizeof(int));
+
+    
+    // Initializing the values in the residual graph
+    for(int i=0; i<vertices; i++)
+    {
+        for(int j=0; j<vertices; j++)
+        {
+            cpu_res_graph[i * vertices + j ] = cpu_graph[ i * vertices + j ] ;
+        }
+    }
+
+
+    // Assigning height as 0 to all the vertices  . 
+    for(int i=0; i<vertices; i++)
+    {
+        cpu_height[i] = 0;
+    }
+
+    // Source is initialized as height equal to number of vertices
+    cpu_height[source] = vertices;
+
+
+    // Initializing  excess flow of all the vertices as 0 . 
+    for(int i=0; i<vertices; i++)
+    {
+        cpu_node_excess_flow[i] = 0;
+    }
+
+
+    *cpu_excess_total = 0;
+
+    // This for loop will push the flow in all the outgoing edges from the source. Also, flow equal to the capacity of edge will be pushed.
+    for( int i = 0; i<vertices; i++)
+    {
+        
+        if(cpu_graph[source*vertices+i] > 0)
+        {
+            int k = cpu_graph[source*vertices+i] ;
+
+            cpu_res_graph[source*vertices + i] = 0;
+          
+            cpu_res_graph [i*vertices + source] =cpu_graph[i*vertices+source] +  k;
+          
+            cpu_node_excess_flow[i] = k;
+          
+            *cpu_excess_total += k;
+
+        }
+    }
+    
+    // Copying the contents from cpu to gpu
+    cudaMemcpy(gpu_res_graph, cpu_res_graph, vertices*vertices*sizeof(int) , cudaMemcpyHostToDevice);
+    cudaMemcpy(gpu_node_excess_flow, cpu_node_excess_flow, vertices*sizeof(int) , cudaMemcpyHostToDevice);
+    
+
+    while ( cpu_node_excess_flow[source] + cpu_node_excess_flow[sink] < *cpu_excess_total)
+    {
+        // Copying contents from cpu to gpu
+        cudaMemcpy(gpu_height, cpu_height, vertices*sizeof(int) , cudaMemcpyHostToDevice);
+        cudaMemcpy(gpu_node_excess_flow, cpu_node_excess_flow, vertices*sizeof(int) , cudaMemcpyHostToDevice);
+
+
+        // Push relabel Kernel call  to push the flow
+        kernel_push_relabel<<<vertices,1>>>(gpu_res_graph, gpu_node_excess_flow, gpu_height, vertices , source, sink );
+        cudaDeviceSynchronize();
+
+
+        // Global relabel function call. It is also parallelized . Inside the function global relabel, kernel calls have been  made.
+        global_relabel(gpu_graph, cpu_node_excess_flow, gpu_node_excess_flow, gpu_res_graph, gpu_height, cpu_height, cpu_excess_total, source , sink, vertices);
+
+    }
+    
+
+    cudaDeviceSynchronize();
+    cudaMemcpy( cpu_res_graph, gpu_res_graph, vertices * vertices * sizeof(int) , cudaMemcpyDeviceToHost) ;
+
+    // Final maxflow reached at sink 
+    *cpu_result = cpu_node_excess_flow[sink];
+    
+    return cpu_res_graph;
+}
+
+
+/* *********************************************  Main  ********************************************* */
 
 int main(int argc, char **argv){
+    
 
     FILE *fin, *fout;
     
     char *inputfilename = argv[1];
+    //char *inputfilename = "sample.txt";
     fin = fopen( inputfilename , "r");
     
     if ( fin == NULL )  {
@@ -546,6 +1159,7 @@ int main(int argc, char **argv){
     }
 
     char *outputfilename = argv[2]; 
+    //char *outputfilename = "output.txt";
     fout = fopen(outputfilename, "w");
 
     int vertices, edges, source, sink;
@@ -570,11 +1184,25 @@ int main(int argc, char **argv){
         fscanf(fin, "%d %d %d", &u, &v, &c);
         cpu_graph[(u - 1) * vertices + (v - 1)] += c;
     }
+
+    // Some condition check's that could save computation time 
+    if(source == sink)
+    {
+      printf("source and sink are same, so no need to apply algorithm");
+      return 0;
+    }
+
+    if(edges == 0)
+    {
+        printf("No edges in the graph . So maxflow = 0");
+        return 0;
+    }
+
     
-    // Rigved's Part
+    int *residual_graph ;
     
-    int *residual_graph;
-    
+
+    // Sequential Edonds Karp 
     auto start1 = std::chrono::high_resolution_clock::now();
     residual_graph = sequential_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop1 = std::chrono::high_resolution_clock::now();
@@ -582,13 +1210,29 @@ int main(int argc, char **argv){
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by SEQUENTIAL EDONDS KARP is %lld microseconds.\n", duration1.count());
 
+    //printf("Final edge flow graph :\n");                                
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
+    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
+    printf("\n") ;
+
+
+
+    // Parallelized Edonds Karp
     auto start2 = std::chrono::high_resolution_clock::now();
     residual_graph = parallel_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop2 = std::chrono::high_resolution_clock::now();
     auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by PARALLELIZED EDONDS KARP is %lld microseconds.\n", duration2.count());
+
+    //printf("Final edge flow graph :\n");                                
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
+    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
+    printf("\n") ;
     
+
+
+    // Sequential Dinic 
     auto start3 = std::chrono::high_resolution_clock::now();
     residual_graph = sequential_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop3= std::chrono::high_resolution_clock::now();
@@ -596,15 +1240,63 @@ int main(int argc, char **argv){
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by SEQUENTIAL DINIC is %lld microseconds.\n", duration3.count());
 
+    //printf("Final edge flow graph :\n");                               
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
+    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink
+    printf("\n") ;
+
+
+
+    // Parallelized Dinic
     auto start4 = std::chrono::high_resolution_clock::now();
     residual_graph = parallel_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop4 = std::chrono::high_resolution_clock::now();
     auto duration4 = std::chrono::duration_cast<std::chrono::microseconds>(stop4 - start4);
     printf("Max Flow is: %d.\n", *cpu_result);
-    printf("Time taken by PARALLELIZED DINIC %lld microseconds.\n", duration4.count());
+    printf("Time taken by PARALLELIZED DINIC is %lld microseconds.\n", duration4.count());
 
+    //printf("Final edge flow graph :\n");                                
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
+    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
+    printf("\n") ;
+
+
+
+    // Sequential Push_relabel
+    auto start5 = std::chrono::high_resolution_clock::now();
+    residual_graph = sequential_push_relabel(cpu_graph, cpu_result, vertices, source-1, sink-1 ) ;
+    auto stop5 = std::chrono::high_resolution_clock::now();
+    auto duration5 = std::chrono::duration_cast<std::chrono::microseconds>(stop5 - start5);
+    printf("Max Flow is: %d.\n", *cpu_result);
+    printf("Time taken by PUSH RELABEL --Sequential version is %lld microseconds.\n", duration5.count());
+
+    //printf("Final edge flow graph :\n");                                
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
+    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
+    printf("\n") ;
+
+
+
+    // Parallelized Push Relabel
+    auto start6 = std::chrono::high_resolution_clock::now();
+    residual_graph = push_relabel(cpu_graph, gpu_graph , cpu_result, vertices,  source - 1, sink - 1);
+    auto stop6 = std::chrono::high_resolution_clock::now();
+    auto duration6 = std::chrono::duration_cast<std::chrono::microseconds>(stop6 - start6);
+    printf("Max Flow is: %d.\n", *cpu_result);
+    printf("Time taken by PUSH RELABEL --Parallelized version is  %lld microseconds.\n", duration6.count());
+    
+    //printf("Final edge flow graph :\n");                                
+    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
+    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
+    printf("\n") ;
+
+
+
+    // Print final maxflow computed in the output file 
     fprintf(fout, "%d\n\n", *cpu_result);
+    
 
+    // Print the flow between vertices in the output file . It will be printed in (vertices * vertices) size  matrix
     for(int i=0; i<vertices; ++i){
         for(int j=0; j<vertices; ++j){
             if(cpu_graph[i * vertices + j] > 0){

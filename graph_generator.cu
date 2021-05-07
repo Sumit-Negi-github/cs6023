@@ -1,3 +1,6 @@
+%%cu
+/* ********************************************  Graph Generator  ******************************************** */
+
 #include<cuda.h>
 #include<stdio.h>
 #include<stdlib.h>
@@ -6,31 +9,51 @@
 int graph[10001][10001];
 
 int main () {
-    int nvertices, nedges, row, col, capacity, maxcapacity, source, destination;
+    /*
+          nvertices : Number of vertices in the graph
+          nedges : Number of edges in the graph
+          maxcapacity : maxcapacity possible for any edge
+          source : source vertex in the graph
+          sink : sink vertex in the graph
+    */
+
+    int nvertices, nedges, row, col, capacity, maxcapacity, source, sink;
     srand(time(0));
 
     // Set number of vertices
-    nvertices = (rand() % 10000) + 1;
+
+    nvertices = rand()%10001;                                 // For randomly selection of number of vertices
+    //nvertices = 100;                                        // For manually setting the number of vertices
+
 
     // Set number of edges 
-    nedges = rand() % (nvertices*(nvertices-1));
+
+    nedges = rand() % ((nvertices*(nvertices-1)));             // For randomly selection of number of edges
+    //nedges = 8;                                              // For manually setting the number of edges
+
 
     // Set maximum capacity possible for an edge
-    maxcapacity = 10;
+    maxcapacity = 10;                                          // Set maxcapacity possible for any edge
+
 
     printf("Number of vertices is :%d\n",nvertices);
     printf("Number of edges is :%d\n",nedges);
     
+
     FILE *filepointer;
 
+    // Initializing filepointer with output file for creating graph
     filepointer = fopen("sample.txt","w");
 
-    fprintf(filepointer, "%d %d\n", nvertices, nedges);
+    fprintf(filepointer, "%d %d\n",nvertices,nedges);
 
     source = (rand() % nvertices) + 1;
-    destination = (rand() % nvertices) + 1;
+    sink = (rand() % nvertices) + 1;
 
-    fprintf(filepointer , "%d %d\n" , source, destination);
+    fprintf(filepointer , "%d %d\n" , source, sink);
+
+
+    //int graph[nvertices][nvertices];
 
     for( int i=0; i <= nvertices ; i++)
     {
