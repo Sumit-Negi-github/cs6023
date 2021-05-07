@@ -21,7 +21,7 @@ int main () {
 
     // Set number of vertices
 
-    nvertices = rand()%10001;                                 // For randomly selection of number of vertices
+    nvertices = ( rand() % 10000 ) + 1;                                 // For randomly selection of number of vertices
     //nvertices = 100;                                        // For manually setting the number of vertices
 
 
