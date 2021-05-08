@@ -28,7 +28,7 @@ void printCPUIntArray(int *a, int vertices){
     printf("\n");
 }
 
-__device__ void printGPU(int *graph, int vertices){
+__global__ void printGPU(int *graph, int vertices){
     for(int i=0; i<vertices; ++i){
         for(int j=0; j<vertices; ++j){
             printf("%d ", graph[i * vertices + j]);
