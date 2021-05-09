@@ -1308,23 +1308,23 @@ int main(int argc, char **argv){
     
 
     // Print the flow between vertices in the output file . It will be printed in (vertices * vertices) size  matrix
-    // for(int i=0; i<vertices; ++i){
-    //     for(int j=0; j<vertices; ++j){
-    //         if(cpu_graph[i * vertices + j] > 0){
-    //             int f = cpu_graph[i * vertices + j] - residual_graph[i * vertices + j];
-    //             if(f < 0){
-    //                 fprintf(fout, "%d ", 0);    
-    //             }
-    //             else{
-    //                 fprintf(fout, "%d ", f);
-    //             }
-    //         }
-    //         else{
-    //             fprintf(fout, "%d ", 0);
-    //         }
-    //     }
-    //     fprintf(fout, "\n");
-    // }
+    for(int i=0; i<vertices; ++i){
+        for(int j=0; j<vertices; ++j){
+            if(cpu_graph[i * vertices + j] > 0){
+                int f = cpu_graph[i * vertices + j] - residual_graph[i * vertices + j];
+                if(f < 0){
+                    fprintf(fout, "%d ", 0);    
+                }
+                else{
+                    fprintf(fout, "%d ", f);
+                }
+            }
+            else{
+                fprintf(fout, "%d ", 0);
+            }
+        }
+        fprintf(fout, "\n");
+    }
 
     fclose(fin);
     fclose(fout);
