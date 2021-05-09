@@ -1192,95 +1192,85 @@ int main(int argc, char **argv){
     
 
     // Sequential Edonds Karp 
+    
+    /*
     auto start1 = std::chrono::high_resolution_clock::now();
     residual_graph = sequential_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop1 = std::chrono::high_resolution_clock::now();
     auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(stop1 - start1);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by SEQUENTIAL EDONDS KARP is %lld microseconds.\n", duration1.count());
-
-    //printf("Final edge flow graph :\n");                                
-    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
-    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
-    printf("\n") ;
+    printf("\n");
+    */
 
 
 
     // Parallelized Edonds Karp
+    
+    /*
     auto start2 = std::chrono::high_resolution_clock::now();
     residual_graph = parallel_edmonds_karp(vertices, edges, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop2 = std::chrono::high_resolution_clock::now();
     auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by PARALLELIZED EDONDS KARP is %lld microseconds.\n", duration2.count());
-
-    //printf("Final edge flow graph :\n");                                
-    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
-    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
-    printf("\n") ;
-    
+    printf("\n");
+    */
 
 
     // Sequential Dinic 
+    
+    /*
     auto start3 = std::chrono::high_resolution_clock::now();
     residual_graph = sequential_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop3= std::chrono::high_resolution_clock::now();
     auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(stop3 - start3);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by SEQUENTIAL DINIC is %lld microseconds.\n", duration3.count());
-
-    //printf("Final edge flow graph :\n");                               
-    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
-    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink
-    printf("\n") ;
+    printf("\n");
+    */
 
 
 
     // Parallelized Dinic
+    
+    /*
     auto start4 = std::chrono::high_resolution_clock::now();
     residual_graph = parallel_dinic(vertices, source - 1, sink - 1, cpu_graph, cpu_result);
     auto stop4 = std::chrono::high_resolution_clock::now();
     auto duration4 = std::chrono::duration_cast<std::chrono::microseconds>(stop4 - start4);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by PARALLELIZED DINIC is %lld microseconds.\n", duration4.count());
-
-    //printf("Final edge flow graph :\n");                                
-    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
-    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
-    printf("\n") ;
-
+    printf("\n");
+    */
 
 
     // Sequential Push_relabel
+    
+    /*
     auto start5 = std::chrono::high_resolution_clock::now();
     residual_graph = sequential_push_relabel(cpu_graph, cpu_result, vertices, source-1, sink-1 ) ;
     auto stop5 = std::chrono::high_resolution_clock::now();
     auto duration5 = std::chrono::duration_cast<std::chrono::microseconds>(stop5 - start5);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by PUSH RELABEL --Sequential version is %lld microseconds.\n", duration5.count());
-
-    //printf("Final edge flow graph :\n");                                
-    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
-    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
-    printf("\n") ;
+    printf("\n");
+    */
 
 
 
     // Parallelized Push Relabel
+    
+    
     auto start6 = std::chrono::high_resolution_clock::now();
     residual_graph = push_relabel(cpu_graph, gpu_graph , cpu_result, vertices,  source - 1, sink - 1);
     auto stop6 = std::chrono::high_resolution_clock::now();
     auto duration6 = std::chrono::duration_cast<std::chrono::microseconds>(stop6 - start6);
     printf("Max Flow is: %d.\n", *cpu_result);
     printf("Time taken by PUSH RELABEL --Parallelized version is  %lld microseconds.\n", duration6.count());
+    printf("\n");
+
     
-    //printf("Final edge flow graph :\n");                                
-    //final_edge_flow_printer(cpu_graph, residual_graph, vertices);      // just to check the edge flow matrix 
-    //sink_flow_calc(cpu_graph, residual_graph, vertices, sink-1);         // Reverification of flow to sink 
-    printf("\n") ;
-
-
-
     // Print final maxflow computed in the output file 
     fprintf(fout, "%d\n\n", *cpu_result);
     
