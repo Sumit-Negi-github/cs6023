@@ -28,7 +28,7 @@ void printCPUIntArray(int *a, int vertices){
     printf("\n");
 }
 
-__device__ void printGPU(int *graph, int vertices){
+__global__ void printGPU(int *graph, int vertices){
     for(int i=0; i<vertices; ++i){
         for(int j=0; j<vertices; ++j){
             printf("%d ", graph[i * vertices + j]);
@@ -135,7 +135,7 @@ __global__ void kernel_find_augmenting_path(int vertices, int *residual_graph, b
 
     int id = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if(frontier[id]){
+    if(id < vertices && frontier[id]){
 
         frontier[id] = false;
 
@@ -186,15 +186,19 @@ bool find_augmenting_path(int vertices, int source, int sink, int *residual_grap
     return false;
 }
 
-__global__ void kernel_update_residual_graph(int vertices, int *residual_graph, int *path, int *min_flow){
+__global__ void kernel_update_residual_graph(int vertices, int *residual_graph, int *path_length, int *path, int *min_flow){
     
     int id = blockIdx.x * blockDim.x + threadIdx.x;
 
-    int v = path[id];
-    int u = path[id + 1];
+    if(id < *path_length - 1){
 
-    residual_graph[u * vertices + v] -= *min_flow;
-    residual_graph[v * vertices + u] += *min_flow;
+        int v = path[id];
+        int u = path[id + 1];
+
+        residual_graph[u * vertices + v] -= *min_flow;
+        residual_graph[v * vertices + u] += *min_flow;
+
+    }
 }
 
 void update_residual_graph(int vertices, int *residual_graph, int *path, int path_length, int min_flow){
@@ -212,7 +216,7 @@ void update_residual_graph(int vertices, int *residual_graph, int *path, int pat
 __global__ void kernel_find_max_flow(int vertices, int source, int *graph, int *residual_graph, int *result){
     int v = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if(graph[source * vertices + v] > 0){
+    if(v < vertices && graph[source * vertices + v] > 0){
         atomicAdd(result, graph[source * vertices + v] - residual_graph[source * vertices + v ]);
     }
 }
@@ -345,10 +349,11 @@ int * parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *
         while(!(*cpu_frontier_empty)){
 
             cudaMemset(gpu_frontier_empty, true, sizeof(bool));
-            
-            kernel_find_augmenting_path<<<vertices, 1>>>(vertices, gpu_residual_graph, gpu_frontier, gpu_visited, gpu_previous, gpu_frontier_empty);
+           
+            kernel_find_augmenting_path<<<(ceil)((double)vertices / 1024), 1024>>>(vertices, gpu_residual_graph, gpu_frontier, gpu_visited, gpu_previous, gpu_frontier_empty);
 
             cudaMemcpy(cpu_frontier_empty, gpu_frontier_empty, sizeof(bool), cudaMemcpyDeviceToHost);
+
         }
 
         cudaMemcpy(cpu_previous, gpu_previous, vertices * sizeof(int), cudaMemcpyDeviceToHost);
@@ -377,15 +382,16 @@ int * parallel_edmonds_karp(int vertices, int edges, int source, int sink, int *
 
         cudaMemcpy(gpu_min_flow, cpu_min_flow, sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(gpu_path, cpu_path, vertices * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(gpu_path_length, cpu_path_length, sizeof(int), cudaMemcpyHostToDevice);
     
-        kernel_update_residual_graph<<<(*cpu_path_length) - 1, 1>>>(vertices, gpu_residual_graph, gpu_path, gpu_min_flow);
+        kernel_update_residual_graph<<<(ceil)((double)((*cpu_path_length) - 1) / 1024), 1024>>>(vertices, gpu_residual_graph, gpu_path_length, gpu_path, gpu_min_flow);
 
         cudaMemcpy(cpu_residual_graph, gpu_residual_graph, vertices * vertices * sizeof(int), cudaMemcpyDeviceToHost);
     
     }while(cpu_previous[sink] != -1);
     
     cudaMemset(gpu_result, 0, sizeof(int));
-    kernel_find_max_flow<<<vertices, 1>>>(vertices, source, gpu_graph, gpu_residual_graph, gpu_result);
+    kernel_find_max_flow<<<(ceil)((double)vertices / 1024), 1024>>>(vertices, source, gpu_graph, gpu_residual_graph, gpu_result);
     cudaMemcpy(cpu_result, gpu_result, sizeof(int), cudaMemcpyDeviceToHost);
 
     return cpu_residual_graph;
@@ -400,7 +406,7 @@ __global__ void kernel_find_level_path(int vertices, int sink, int *residual_gra
 
     int id = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if(frontier[id]){
+    if(id < vertices && frontier[id]){
         
         frontier[id] = false;
 
@@ -408,10 +414,16 @@ __global__ void kernel_find_level_path(int vertices, int sink, int *residual_gra
 
             if(v == id || residual_graph[id * vertices + v] <= 0) continue;
 
-            if(atomicCAS(&level[v], -1, lev) == -1){
+            // if(atomicCAS(&level[v], -1, lev) == -1){
+            //     frontier[v] = true;
+            //     *frontier_empty = false;
+            // }
+            
+            if(level[v] == -1){
+                level[v] = lev;
                 frontier[v] = true;
                 *frontier_empty = false;
-            }        
+            }
         }
     }
 }
@@ -467,7 +479,6 @@ int sendFlow(int vertices, int u, int sink, int *residual_graph, int *level, int
 	}
 	return 0;
 }
-
 
 int * sequential_dinic(int vertices, int source, int sink, int *graph, int *result){
 
@@ -550,7 +561,7 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
             
             cudaMemset(gpu_frontier_empty, true, sizeof(bool));
             
-            kernel_find_level_path<<<vertices, 1>>>(vertices, sink, gpu_residual_graph, gpu_frontier, gpu_level, lev, gpu_frontier_empty);
+            kernel_find_level_path<<<(ceil)((double)vertices/1024), 1024>>>(vertices, sink, gpu_residual_graph, gpu_frontier, gpu_level, lev, gpu_frontier_empty);
 
             cudaMemcpy(cpu_frontier_empty, gpu_frontier_empty, sizeof(bool), cudaMemcpyDeviceToHost);
 
@@ -559,28 +570,28 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
 
         cudaMemcpy(cpu_level, gpu_level, vertices * sizeof(int), cudaMemcpyDeviceToHost);
 
-        if(empty_runs == 2){
-            memset(cpu_level, -1, vertices * sizeof(int));
-            cpu_level[source] = 0;
+        // if(empty_runs == 2){
+        //     memset(cpu_level, -1, vertices * sizeof(int));
+        //     cpu_level[source] = 0;
             
-            std::queue<int> queue;
-            queue.push(source);
+        //     std::queue<int> queue;
+        //     queue.push(source);
 
-            while (!queue.empty())
-            {
-                int u = queue.front();
-                queue.pop();
+        //     while (!queue.empty())
+        //     {
+        //         int u = queue.front();
+        //         queue.pop();
 
-                for (int v=0; v<vertices; ++v)
-                {
-                    if (u != v && cpu_residual_graph[u * vertices + v] > 0 && cpu_level[v] < 0)
-                    {
-                        cpu_level[v] = cpu_level[u] + 1;
-                        queue.push(v);
-                    }
-                }
-            }
-        }
+        //         for (int v=0; v<vertices; ++v)
+        //         {
+        //             if (u != v && cpu_residual_graph[u * vertices + v] > 0 && cpu_level[v] < 0)
+        //             {
+        //                 cpu_level[v] = cpu_level[u] + 1;
+        //                 queue.push(v);
+        //             }
+        //         }
+        //     }
+        // }
 
         if(cpu_level[sink] == -1){
             break;
@@ -1297,23 +1308,23 @@ int main(int argc, char **argv){
     
 
     // Print the flow between vertices in the output file . It will be printed in (vertices * vertices) size  matrix
-    for(int i=0; i<vertices; ++i){
-        for(int j=0; j<vertices; ++j){
-            if(cpu_graph[i * vertices + j] > 0){
-                int f = cpu_graph[i * vertices + j] - residual_graph[i * vertices + j];
-                if(f < 0){
-                    fprintf(fout, "%d ", 0);    
-                }
-                else{
-                    fprintf(fout, "%d ", f);
-                }
-            }
-            else{
-                fprintf(fout, "%d ", 0);
-            }
-        }
-        fprintf(fout, "\n");
-    }
+    // for(int i=0; i<vertices; ++i){
+    //     for(int j=0; j<vertices; ++j){
+    //         if(cpu_graph[i * vertices + j] > 0){
+    //             int f = cpu_graph[i * vertices + j] - residual_graph[i * vertices + j];
+    //             if(f < 0){
+    //                 fprintf(fout, "%d ", 0);    
+    //             }
+    //             else{
+    //                 fprintf(fout, "%d ", f);
+    //             }
+    //         }
+    //         else{
+    //             fprintf(fout, "%d ", 0);
+    //         }
+    //     }
+    //     fprintf(fout, "\n");
+    // }
 
     fclose(fin);
     fclose(fout);

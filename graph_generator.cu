@@ -22,13 +22,13 @@ int main () {
     // Set number of vertices
 
     nvertices = ( rand() % 10000 ) + 1;                                 // For randomly selection of number of vertices
-    //nvertices = 100;                                        // For manually setting the number of vertices
+    // nvertices = 5000;                                        // For manually setting the number of vertices
 
 
     // Set number of edges 
 
     nedges = rand() % ((nvertices*(nvertices-1)));             // For randomly selection of number of edges
-    //nedges = 8;                                              // For manually setting the number of edges
+    // nedges = 10000;                                              // For manually setting the number of edges
 
 
     // Set maximum capacity possible for an edge
