@@ -570,28 +570,6 @@ int * parallel_dinic(int vertices, int source, int sink, int *cpu_graph, int *cp
 
         cudaMemcpy(cpu_level, gpu_level, vertices * sizeof(int), cudaMemcpyDeviceToHost);
 
-        // if(empty_runs == 2){
-        //     memset(cpu_level, -1, vertices * sizeof(int));
-        //     cpu_level[source] = 0;
-            
-        //     std::queue<int> queue;
-        //     queue.push(source);
-
-        //     while (!queue.empty())
-        //     {
-        //         int u = queue.front();
-        //         queue.pop();
-
-        //         for (int v=0; v<vertices; ++v)
-        //         {
-        //             if (u != v && cpu_residual_graph[u * vertices + v] > 0 && cpu_level[v] < 0)
-        //             {
-        //                 cpu_level[v] = cpu_level[u] + 1;
-        //                 queue.push(v);
-        //             }
-        //         }
-        //     }
-        // }
 
         if(cpu_level[sink] == -1){
             break;
